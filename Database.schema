@@ -1,0 +1,37 @@
+import { pgTable, text, serial, integer, boolean, timestamp, json } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod";
+
+export const generatedImages = pgTable("generated_images", {
+  id: serial("id").primaryKey(),
+  prompt: text("prompt").notNull(),
+  imageUrl: text("image_url").notNull(),
+  settings: json("settings").$type<{
+    steps?: number;
+    cfgScale?: number;
+    resolution?: string;
+    sampler?: string;
+  }>(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const promptHistory = pgTable("prompt_history", {
+  id: serial("id").primaryKey(),
+  prompt: text("prompt").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertImageSchema = createInsertSchema(generatedImages).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertPromptSchema = createInsertSchema(promptHistory).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertImage = z.infer<typeof insertImageSchema>;
+export type Image = typeof generatedImages.$inferSelect;
+export type InsertPrompt = z.infer<typeof insertPromptSchema>;
+export type Prompt = typeof promptHistory.$inferSelect;
