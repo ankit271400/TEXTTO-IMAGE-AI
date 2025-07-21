@@ -1,0 +1,61 @@
+import { generatedImages, promptHistory, type Image, type InsertImage, type Prompt, type InsertPrompt } from "@shared/schema";
+import { db } from "./db";
+import { eq, desc } from "drizzle-orm";
+
+export interface IStorage {
+  createImage(image: InsertImage): Promise<Image>;
+  getImages(limit?: number, offset?: number): Promise<Image[]>;
+  getImageById(id: number): Promise<Image | undefined>;
+  addPromptToHistory(prompt: InsertPrompt): Promise<Prompt>;
+  getPromptHistory(limit?: number): Promise<Prompt[]>;
+}
+
+export class DatabaseStorage implements IStorage {
+  async createImage(insertImage: InsertImage): Promise<Image> {
+    const [image] = await db
+      .insert(generatedImages)
+      .values({
+        ...insertImage,
+        settings: insertImage.settings || null
+      })
+      .returning();
+    return image;
+  }
+
+  async getImages(limit = 20, offset = 0): Promise<Image[]> {
+    const images = await db
+      .select()
+      .from(generatedImages)
+      .orderBy(desc(generatedImages.createdAt))
+      .limit(limit)
+      .offset(offset);
+    return images;
+  }
+
+  async getImageById(id: number): Promise<Image | undefined> {
+    const [image] = await db
+      .select()
+      .from(generatedImages)
+      .where(eq(generatedImages.id, id));
+    return image || undefined;
+  }
+
+  async addPromptToHistory(insertPrompt: InsertPrompt): Promise<Prompt> {
+    const [prompt] = await db
+      .insert(promptHistory)
+      .values(insertPrompt)
+      .returning();
+    return prompt;
+  }
+
+  async getPromptHistory(limit = 10): Promise<Prompt[]> {
+    const prompts = await db
+      .select()
+      .from(promptHistory)
+      .orderBy(desc(promptHistory.createdAt))
+      .limit(limit);
+    return prompts;
+  }
+}
+
+export const storage = new DatabaseStorage();
