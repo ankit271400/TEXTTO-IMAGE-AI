@@ -1,0 +1,103 @@
+import type { Express } from "express";
+import { createServer, type Server } from "http";
+import { storage } from "./storage";
+import { z } from "zod";
+
+const generateImageSchema = z.object({
+  prompt: z.string().min(1).max(500),
+  settings: z.object({
+    steps: z.number().min(10).max(100).optional().default(50),
+    cfgScale: z.number().min(1).max(20).optional().default(7),
+    resolution: z.string().optional().default("512x512"),
+    sampler: z.string().optional().default("DPM++ 2M Karras"),
+  }).optional().default({}),
+});
+
+export async function registerRoutes(app: Express): Promise<Server> {
+  app.post("/api/generate", async (req, res) => {
+    try {
+      const { prompt, settings } = generateImageSchema.parse(req.body);
+      
+      await storage.addPromptToHistory({ prompt });
+      
+      const hfApiKey = process.env.HUGGING_FACE_API_KEY || process.env.HF_API_KEY || "hf_demo_key";
+      
+      const response = await fetch(
+        "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
+        {
+          headers: {
+            Authorization: `Bearer ${hfApiKey}`,
+            "Content-Type": "application/json",
+          },
+          method: "POST",
+          body: JSON.stringify({
+            inputs: prompt,
+            parameters: {
+              num_inference_steps: settings.steps,
+              guidance_scale: settings.cfgScale,
+            },
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Hugging Face API error: ${response.status} - ${errorText}`);
+      }
+
+      const imageBlob = await response.blob();
+      const imageBuffer = Buffer.from(await imageBlob.arrayBuffer());
+      const imageBase64 = imageBuffer.toString('base64');
+      const imageUrl = `data:image/png;base64,${imageBase64}`;
+
+      const savedImage = await storage.createImage({
+        prompt,
+        imageUrl,
+        settings,
+      });
+
+      res.json(savedImage);
+    } catch (error: any) {
+      console.error("Error generating image:", error);
+      res.status(500).json({ 
+        error: "Failed to generate image", 
+        message: error.message,
+        details: error.message.includes("Hugging Face") ? "Please check your Hugging Face API key" : undefined
+      });
+    }
+  });
+
+  app.get("/api/images", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 20;
+      const offset = parseInt(req.query.offset as string) || 0;
+      const images = await storage.getImages(limit, offset);
+      res.json(images);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch images" });
+    }
+  });
+
+  app.get("/api/prompts/history", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 10;
+      const prompts = await storage.getPromptHistory(limit);
+      res.json(prompts);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch prompt history" });
+    }
+  });
+
+  app.post("/api/prompts/enhance", async (req, res) => {
+    try {
+      const { prompt } = req.body;
+      const enhancedPrompt = `${prompt}, highly detailed, 8K resolution, masterpiece, professional photography, perfect lighting`;
+      res.json({ enhancedPrompt });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to enhance prompt" });
+    }
+  });
+
+  const httpServer = createServer(app);
+  return httpServer;
+}
